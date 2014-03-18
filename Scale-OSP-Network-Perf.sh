@@ -8,7 +8,6 @@
 # Currently now VLAN testing... This assumes there is a br-tun bridge
 #
 # -- Updates --
-# 03/18/14 - Fixes
 # 02/20/14 - Working on Scale 
 # 11/13/13 - Create a new security group, then remove it for the cleanup
 # 11/12/13 - Added code to allow multiple launches of this script
@@ -16,22 +15,12 @@
 # @author Joe Talerico (jtaleric@redhat.com)
 #-------------------------------------------------------------------------------
 
-RUN=0
-if [ -z $1 ] ; then 
- RUN=1
-else 
+if [ -n $1 ] ; then 
  echo Run : $1
- RUN=$1
 fi
 
-VETH1="veth$RUN"
-VETH2="veth"`expr $RUN + 1000`
-
-GUEST_VETH="eth1"
-
-if [ -z $2 ] ; then 
- FOLDER=OSP-NetworkScale-Output_$(date +%Y_%m_%d_%H_%M_%S)
-else
+FOLDER=OSP-NetworkScale-Output_$(date +%Y_%m_%d_%H_%M_%S)
+if [ -n $2 ] ; then 
  FOLDER=$2
 fi
 
@@ -51,16 +40,14 @@ mkdir -p $FOLDER
 #-------------------------------------------------------------------------------
 KEYSTONE_ADMIN="/root/keystonerc_admin"
 #----------------------- Image and flavor size ---------------------------------
-NETPERF_IMG_NAME="netperf-test-nocloudinit"
+NETPERF_IMG_NAME="netperf-test-cloudinit"
 NETPERF_IMG="/home/netperf-nocloudinit-centos.qcow2"
 GUEST_SIZE="m1.small"
 #----------------------- Netperf values ----------------------------------------
 NETPERF_LENGTH=60
-#
-# Disable these to just do a simple ping test.
-#
-TCP_STREAM=false
-UDP_STREAM=false
+TCP_STREAM=true
+UDP_STREAM=true
+PSTAT=false
 #-------------------------------------------------------------------------------
 # Set this to true if tunnels are used, set to false if VLANs are used.
 #
@@ -78,18 +65,17 @@ CLEAN=true
 #-------------------------------------------------------------------------------
 CLEAN_IMAGE=false
 #----------------------- Hosts to Launch Guests  -------------------------------
-ZONE[0]="nova:host05-rack02.scale.openstack.engineering.redhat.com"
-ZONE[1]="nova:host21-rack02.scale.openstack.engineering.redhat.com"
+ZONE[0]="nova:pcloud16.perf.lab.eng.bos.redhat.com"
+ZONE[1]="nova:pcloud16.perf.lab.eng.bos.redhat.com"
 # Run PStat
-PSTAT=false
 pstat_host1="pcloud16.perf.lab.eng.bos.redhat.com"
 pstat_host2="pcloud15.perf.lab.eng.bos.redhat.com"
 #----------------------- Network -----------------------------------------------
-TUNNEL_NIC="bond0"
+TUNNEL_NIC="p3p1"
 TUNNEL_SPEED=`ethtool ${TUNNEL_NIC} | grep Speed | sed 's/\sSpeed: \(.*\)Mb\/s/\1/'`
 TUNNEL_TYPE=`ovs-vsctl show | grep -E 'Port.*gre|vxlan|stt*'`
-NETWORK="10Net-$RUN"
-SUBNET="10.0.$RUN.0/24"
+NETWORK="10Net"
+SUBNET="10.0.0.0/24"
 MTU=1500
 SSHKEY="/root/.ssh/id_rsa.pub"
 SINGLE_TUNNEL_TEST=true
@@ -98,7 +84,7 @@ MULTI_TUNNEL_TEST=false
 #----------------------- Need to determine how to tell ( ethtool? STT ) --------
 HARDWARE_OFFLOAD=false 
 #----------------------- Is Jumbo Frames enabled throughout? -------------------
-JUMBO=true
+JUMBO=false
 DEBUG=true
 
 #-------------------------------------------------------------------------------
@@ -124,13 +110,13 @@ fi
 declare -A NETPERF
 NETPERF[8]="1,.1"
 NETPERF[16]="2,.3"
-NETPERF[32]="5,.7"
-NETPERF[64]="8,1"
-NETPERF[128]="13,2"
-NETPERF[256]="15,5"
-NETPERF[512]="15,11"
+#NETPERF[32]="5,.7"
+#NETPERF[64]="8,1"
+#NETPERF[128]="13,2"
+#NETPERF[256]="15,5"
+#NETPERF[512]="15,11"
 NETPERF[1024]="15,20"
-NETPERF[2048]="15,25"
+#NETPERF[2048]="15,25"
 NETPERF[4096]="15,39"
 NETPERF[8192]="15,55"
 NETPERF[16384]="15,55"
@@ -148,8 +134,8 @@ else
 fi
 
 if ! [ -f $NETPERF_IMG ]; then 
- echo "WARNING :: Unable to find the Netperf image"
- echo "You must import the image before running this script"
+ echo "ERROR :: Unable to find the Netperf image"
+ exit 1
 fi
 
 #-------------------------------------------------------------------------------
@@ -203,9 +189,6 @@ cleanup() {
   fi
  fi 
 
- ip link delete $VETH1
- ovs-vsctl del-port $VETH2
-
 } #END cleanup
 
 if [ -z "$(neutron net-list | grep "${NETWORK}")" ]; then 
@@ -217,13 +200,6 @@ if [ -z "$(neutron net-list | grep "${NETWORK}")" ]; then
  neutron subnet-create $NETWORK $SUBNET 
  neutron net-show $NETWORK 
 fi 
-
-NETWORKID=`nova network-list | grep -e "${NETWORK}\s" | awk '{print $2}'` 
-if $DEBUG  ; then
- echo "#----------------------- Debug -------------------------------------------------"
- echo "Network ID :: $NETWORKID"
- echo "#-------------------------------------------------------------------------------"
-fi
 
 if [ -z "$(glance image-list | grep -E "${NETPERF_IMG_NAME}")" ]; then
  #----------------------- Import image into Glance ------------------------------
@@ -266,7 +242,7 @@ search_string=""
 for host_zone in "${ZONE[@]}"
 do
   echo "Launching instnace on $host_zone"
-  command_out=$(nova boot --image ${IMAGE_ID} --nic net-id=${NETWORKID} --flavor ${GUEST_SIZE} --availability-zone ${host_zone} netperf-${host_zone} --key_name network-testkey --security_group default,netperf-networktest | egrep "\sid\s" | awk '{print $4}')
+  command_out=$(nova boot --image ${IMAGE_ID} --flavor ${GUEST_SIZE} --availability-zone ${host_zone} netperf-${host_zone} --key_name network-testkey --security_group default,netperf-networktest | egrep "\sid\s" | awk '{print $4}')
   search_string+="$command_out|"
 done
 
@@ -279,7 +255,7 @@ echo "Waiting for Instances to begin Running"
 echo "#-------------------------------------------------------------------------------"
 if $DEBUG ; then 
 echo "#----------------------- Debug -------------------------------------------------"
-echo "Guest Search String :: $search_string"
+echo $search_string
 echo "#-------------------------------------------------------------------------------"
 fi
 while true; do 
@@ -298,86 +274,27 @@ while true; do
  fi
 done
 
-if [ -z "$(ip link | grep -e "$VETH1\s")" ]; then
+if [ -z "$(ip link | grep veth3)" ]; then
  echo "#------------------------------------------------------------------------------- "
  echo "Adding a veth"
  echo "#-------------------------------------------------------------------------------"
- ip link add name $VETH1 type veth peer name $VETH2 
- ifconfig $VETH1 10.0.$RUN.150/24
- ifconfig $VETH1 up
- ifconfig $VETH2 up
+ if [ -z "$(ip link | grep -R "veth3\|veth4")" ] ; then 
+  ip link add name veth3 type veth peer name veth4
+ fi
+ ifconfig veth3 10.0.0.150/24
+ ifconfig veth3 up
+ ifconfig veth4 up
 fi
-
-PORT=0
-for ports in `neutron port-list | grep -e "10.0.$RUN." | awk '{print $2}'` ; do 
- if $DEBUG ; then 
-  echo "#----------------------- Debug -------------------------------------------------"
-  echo "Ports :: $ports"
-  echo "#-------------------------------------------------------------------------------"
- fi
- if [[ ! -z $(neutron port-show $ports | grep "device_owner" | grep "dhcp") ]] ; then 
-  echo "#----------------------- Debug -------------------------------------------------"
-  echo "Ports :: $ports"
-  echo "#-------------------------------------------------------------------------------"
-  PORT=$(neutron port-show $ports | grep "mac_address" | awk '{print $4}'); 
- fi 
-done;
-if [[ -z "${PORT}" ]] ; then
- echo "ERROR :: Unable to determine DHCP Port for Network"
- if $CLEAN ; then
-  cleanup
- fi
- exit 0
-fi
-try=0
-if $DEBUG ; then 
- echo "#----------------------- Debug -------------------------------------------------"
- echo "Port :: $PORT"
- echo "#-------------------------------------------------------------------------------"
-fi
-while true ; do
- FLOW=`ovs-ofctl dump-flows br-tun | grep "${PORT}"`
- IFS=', ' read -a array <<< "$FLOW"
- VLANID_HEX=`echo ${array[9]} | sed 's/vlan_tci=//g' | sed 's/\/.*//g'`
- if $DEBUG ; then 
-  echo "#----------------------- Debug -------------------------------------------------"
-  echo "VLAN HEX :: $VLANID_HEX"
-  echo "#-------------------------------------------------------------------------------"
- fi
- if [[ $(echo $VLANID_HEX | grep -q "dl_dst") -eq 1 ]] ; then 
-  continue
- fi 
- VLAN=`printf "%d" ${VLANID_HEX}`
- if $DEBUG ; then
-  echo "#----------------------- Debug -------------------------------------------------"
-  echo "VLAN :: $VLAN"
-  echo "#-------------------------------------------------------------------------------"
- fi
- if [ $VLAN -ne 0 ] ; then
-  break
- else 
-  sleep 10 
- fi
- if [[ $try -eq 15 ]] ; then 
-  echo "ERROR :: Attempting to find the VLAN to use failed..."
-  if $CLEAN ; then
-   cleanup
-  fi
-  exit 0
- fi 
- try=$((try+1))
-done
-
-echo "Using VLAN :: $VLAN"
-
 if $TUNNEL ; then 
- if ! [ -z "$(ovs-vsctl show | grep "Port \"$VETH2\"")" ] ; then
-  ovs-vsctl del-port $VETH2 
+ if ! [ -z "$(ovs-vsctl show | grep "Port \"veth4\"")" ] ; then
+  ovs-vsctl del-port veth4
  fi
 fi
 if $TUNNEL ; then 
- VETH_MAC=`ip link | grep -A 1 ${VETH1} | grep link | awk '{ print $2 }'`
- ovs-vsctl add-port br-int ${VETH2} tag=${VLAN}
+ VETH_MAC=`ip link | grep -A 1 veth3 | grep link | awk '{ print $2 }'`
+ VLAN=`ovs-ofctl dump-flows br-tun table=21 | egrep -o 'dl_vlan=(.*)\s' | sed -rn 's/dl_vlan=//p'`
+ ovs-vsctl add-port br-int veth4 tag=${VLAN}
+ ovs-ofctl add-flow br-tun "priority=3,tun_id=0x1,dl_dst=${VETH_MAC},actions=mod_vlan_vid:${VLAN},NORMAL"
 fi
 echo "#------------------------------------------------------------------------------- "
 echo "Waiting for instances to come online"
@@ -423,16 +340,9 @@ if $SINGLE_TUNNEL_TEST ; then
   exit 1
  fi
 
- ssh -o "ConnectTimeout=3 StrictHostKeyChecking no" -q -t ${NETSERVER} "ifconfig ${GUEST_VETH} mtu ${MTU}" 
- ssh -o "ConnectTimeout=3 StrictHostKeyChecking no" -q -t ${NETCLIENT} "ifconfig ${GUEST_VETH} mtu ${MTU}" 
- ssh -o "ConnectTimeout=3 StrictHostKeyChecking no" -q -t ${NETSERVER} 'netserver ; sleep 4'
- 
- if $DEBUG ; then
-  D1=`ssh -o "ConnectTimeout=3 StrictHostKeyChecking no" -q -t ${NETSERVER} 'ls'`
-  echo "#----------------------- Debug -------------------------------------------------"
-  echo "SSH Output :: $D1"
-  echo "#-------------------------------------------------------------------------------"
- fi
+ ssh -o "StrictHostKeyChecking no" -q -t ${NETSERVER} "ifconfig eth0 mtu ${MTU}" 
+ ssh -o "StrictHostKeyChecking no" -q -t ${NETCLIENT} "ifconfig eth0 mtu ${MTU}" 
+ ssh -o "StrictHostKeyChecking no" -q -t ${NETSERVER} 'netserver ; sleep 2'
 
  if $JUMBO ; then
   sleep 120
@@ -440,13 +350,13 @@ if $SINGLE_TUNNEL_TEST ; then
 
 if $PSTAT ; then
  echo "Checking if PStat is running already, if not, start PStat on the Hosts (currently 2 Hosts)"
- if [[ -z $(ssh -o "ConnectTimeout=3 StrictHostKeyChecking no" -q -t $pstat_host1 "ps aux | grep [p]stat") ]]; then
+ if [[ -z $(ssh -q -t $pstat_host1 "ps aux | grep [p]stat") ]]; then
    echo "Start PStat on $pstat_host1"
-   ssh -o "ConnectTimeout=3 StrictHostKeyChecking no" $pstat_host1 "/opt/perf-dept/pstat/pstat.sh 1 OSP-PSTAT & 2>&1 > /dev/null" & 2>&1 > /dev/null 
+   ssh -o "StrictHostKeyChecking no" $pstat_host1 "/opt/perf-dept/pstat/pstat.sh 1 OSP-PSTAT & 2>&1 > /dev/null" & 2>&1 > /dev/null 
  fi 
- if [[ -z $(ssh -o "ConnectTimeout=3 StrictHostKeyChecking no" -q -t $pstat_host2 "ps aux | grep [p]stat") ]]; then
+ if [[ -z $(ssh -q -t $pstat_host2 "ps aux | grep [p]stat") ]]; then
    echo "Start PStat on $pstat_host2"
-   ssh -o "ConnectTimeout=3 StrictHostKeyChecking no" $pstat_host2 "/opt/perf-dept/pstat/pstat.sh 1 OSP-PSTAT & 2>&1 > /dev/null" & 2>&1 > /dev/null 
+   ssh -o "StrictHostKeyChecking no" $pstat_host2 "/opt/perf-dept/pstat/pstat.sh 1 OSP-PSTAT & 2>&1 > /dev/null" & 2>&1 > /dev/null 
  fi 
 fi
 
@@ -466,7 +376,7 @@ fi
   date_file=$(date +"%d_%m_%y_%H%M%S")
   for msg_size in ${!NETPERF[@]}
   do
-   out=`ssh -o "ConnectTimeout=3 StrictHostKeyChecking no" -q -t ${NETCLIENT} "netperf -4 -H ${NETSERVER} -l ${NETPERF_LENGTH} -T1,1 -l 30 -- -m ${msg_size}" | tee -a $FOLDER/$1-$date_file-TCP_STREAM`
+   out=`ssh -o "StrictHostKeyChecking no" -q -t ${NETCLIENT} "netperf -4 -H ${NETSERVER} -l ${NETPERF_LENGTH} -T1,1 -l 30 -- -m ${msg_size}" | tee -a $FOLDER/$1-$date_file-TCP_STREAM`
    if $DEBUG ; then 
      echo $out
    fi
@@ -495,7 +405,7 @@ fi
   date_file=$(date +"%d_%m_%y_%H%M%S")
   for msg_size in ${!NETPERF[@]}
   do
-   out=`ssh -o "ConnectTimeout=3 StrictHostKeyChecking no" -q -t ${NETCLIENT} "netperf -4 -H ${NETSERVER} -l ${NETPERF_LENGTH} -t UDP_STREAM -T1,1 -l 30 -- -m ${msg_size}" | tee -a $FOLDER/$1-$date_file-UDP_STREAM`
+   out=`ssh -o "StrictHostKeyChecking no" -q -t ${NETCLIENT} "netperf -4 -H ${NETSERVER} -l ${NETPERF_LENGTH} -t UDP_STREAM -T1,1 -l 30 -- -m ${msg_size}" | tee -a $FOLDER/$1-$date_file-UDP_STREAM`
    throughput=`echo "${out}"| grep "$msg_size"| awk '{print $6}'| sed -e 's/ /,/g'`
    percent=`perl -e "print ${throughput}/${TUNNEL_SPEED}*100"`
 #-------------------------------------------------------------------------------
@@ -514,6 +424,11 @@ fi
   echo "#-------------------------------------------------------------------------------"
   fi
 
+
+#-------------------------------------------------------------------------------
+# UDP_STREAM Test -
+#  Run Netperf UDP_STREAM test from one Host to the other over the Tunnel.
+#-------------------------------------------------------------------------------
 fi # End SINGLE_TUNNEL_TEST
 
 #----------------------- Cleanup -----------------------------------------------
