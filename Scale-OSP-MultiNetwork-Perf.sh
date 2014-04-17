@@ -5,9 +5,11 @@
 #
 #
 # -- To do --
-# Currently now VLAN testing... This assumes there is a br-tun bridge
+# ----  
+# ---- Currently now VLAN testing... This assumes there is a br-tun bridge
 #
 # -- Updates --
+# 04/17/14 - Sync the throughput runs... Sync with Lock file 
 # 03/18/14 - Fixes
 # 02/20/14 - Working on Scale 
 # 11/13/13 - Create a new security group, then remove it for the cleanup
@@ -16,6 +18,10 @@
 # @author Joe Talerico (jtaleric@redhat.com)
 #-------------------------------------------------------------------------------
 
+
+#-------------------------------------------------------------------------------
+# Determine the Run - for multi-run 
+#-------------------------------------------------------------------------------
 RUN=0
 if [ -z $1 ] ; then 
  RUN=1
@@ -24,11 +30,15 @@ else
  RUN=$1
 fi
 
+#----------------------- Currently not using Floating IPs ----------------------
 VETH1="veth$RUN"
 VETH2="veth"`expr $RUN + 1000`
 
+
+#----------------------- Set the eth within the guest --------------------------
 GUEST_VETH="eth1"
 
+#----------------------- Store the results -------------------------------------
 if [ -z $2 ] ; then 
  FOLDER=OSP-NetworkScale-Output_$(date +%Y_%m_%d_%H_%M_%S)
 else
@@ -61,29 +71,36 @@ NETPERF_LENGTH=60
 #
 TCP_STREAM=false
 UDP_STREAM=false
+
 #-------------------------------------------------------------------------------
 # Set this to true if tunnels are used, set to false if VLANs are used.
 #
 # !! If VLANs are used, the user must setup the flows and veth before running !!
 #-------------------------------------------------------------------------------
 TUNNEL=true
+
 #----------------------- Array to hold guest ID --------------------------------
 declare -A GUESTS
+
 #-------------------------------------------------------------------------------
 # Clean will remove Network and Guest information
 #-------------------------------------------------------------------------------
 CLEAN=true
+
 #-------------------------------------------------------------------------------
 # CLEAN_IMAGE will remove the netperf-networktest image from glance
 #-------------------------------------------------------------------------------
 CLEAN_IMAGE=false
+
 #----------------------- Hosts to Launch Guests  -------------------------------
 ZONE[0]="nova:host05-rack02.scale.openstack.engineering.redhat.com"
 ZONE[1]="nova:host21-rack02.scale.openstack.engineering.redhat.com"
-# Run PStat
+
+#----------------------- Run PStat on Hypervisors ------------------------------
 PSTAT=false
 pstat_host1="pcloud16.perf.lab.eng.bos.redhat.com"
 pstat_host2="pcloud15.perf.lab.eng.bos.redhat.com"
+
 #----------------------- Network -----------------------------------------------
 TUNNEL_NIC="bond0"
 TUNNEL_SPEED=`ethtool ${TUNNEL_NIC} | grep Speed | sed 's/\sSpeed: \(.*\)Mb\/s/\1/'`
@@ -93,10 +110,13 @@ SUBNET="10.0.$RUN.0/24"
 MTU=1500
 SSHKEY="/root/.ssh/id_rsa.pub"
 SINGLE_TUNNEL_TEST=true
+
 #----------------------- No Code.... yet. --------------------------------------
 MULTI_TUNNEL_TEST=false
+
 #----------------------- Need to determine how to tell ( ethtool? STT ) --------
 HARDWARE_OFFLOAD=false 
+
 #----------------------- Is Jumbo Frames enabled throughout? -------------------
 JUMBO=true
 DEBUG=true
@@ -298,6 +318,7 @@ while true; do
  fi
 done
 
+#----------------------- If we are not using Floating IPs ----------------------
 if [ -z "$(ip link | grep -e "$VETH1\s")" ]; then
  echo "#------------------------------------------------------------------------------- "
  echo "Adding a veth"
@@ -308,6 +329,9 @@ if [ -z "$(ip link | grep -e "$VETH1\s")" ]; then
  ifconfig $VETH2 up
 fi
 
+#-------------------------------------------------------------------------------
+# Determine the Segmentation ID if not using 
+#-------------------------------------------------------------------------------
 PORT=0
 for ports in `neutron port-list | grep -e "10.0.$RUN." | awk '{print $2}'` ; do 
  if $DEBUG ; then 
@@ -423,9 +447,31 @@ if $SINGLE_TUNNEL_TEST ; then
   exit 1
  fi
 
- ssh -o "ConnectTimeout=3 StrictHostKeyChecking no" -q -t ${NETSERVER} "ifconfig ${GUEST_VETH} mtu ${MTU}" 
- ssh -o "ConnectTimeout=3 StrictHostKeyChecking no" -q -t ${NETCLIENT} "ifconfig ${GUEST_VETH} mtu ${MTU}" 
- ssh -o "ConnectTimeout=3 StrictHostKeyChecking no" -q -t ${NETSERVER} 'netserver ; sleep 4'
+ pass=0
+ breakloop=0
+ while true 
+   do 
+     ssh -o BatchMode=yes -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETSERVER} "ifconfig ${GUEST_VETH} mtu ${MTU}" 
+     if [ $? -eq 0 ] ; then
+       pass=$((pass+1))
+     fi
+     ssh -o BatchMode=yes -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETCLIENT} "ifconfig ${GUEST_VETH} mtu ${MTU}" 
+     if [ $? -eq 0 ] ; then
+       pass=$((pass+1))
+     fi
+     ssh -o BatchMode=yes -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETSERVER} 'netserver ; sleep 4'
+     if [ $? -eq 0 ] ; then
+       pass=$((pass+1))
+     fi
+     if [ $pass -eq 3 ] ; then
+       break
+     fi
+     if [ $breakloop -eq 10 ] ; then
+       echo "Error : unable to set MTU within Guest"
+       exit 1
+     fi
+     breakloop=$((breakloop+1))
+ done
  
  if $DEBUG ; then
   D1=`ssh -o "ConnectTimeout=3 StrictHostKeyChecking no" -q -t ${NETSERVER} 'ls'`
@@ -464,8 +510,14 @@ fi
   echo "#-------------------------------------------------------------------------------"
   echo "Message Size, Test Status, Tunnel Speed, Throughput, Expected % of Tunnel"
   date_file=$(date +"%d_%m_%y_%H%M%S")
+  prev_msg_size=0
   for msg_size in ${!NETPERF[@]}
   do
+
+#----------------------- Add logic to determine Lock file ----------------------
+   find=`ps -aux | grep ssh | grep "\-m ${prev_msg_size}"`
+
+
    out=`ssh -o "ConnectTimeout=3 StrictHostKeyChecking no" -q -t ${NETCLIENT} "netperf -4 -H ${NETSERVER} -l ${NETPERF_LENGTH} -T1,1 -l 30 -- -m ${msg_size}" | tee -a $FOLDER/$1-$date_file-TCP_STREAM`
    if $DEBUG ; then 
      echo $out
