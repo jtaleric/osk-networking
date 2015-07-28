@@ -9,6 +9,7 @@
 # ---- Currently now VLAN testing... This assumes there is a br-tun bridge
 #
 # -- Updates --
+# 01/22/14 - moved to uperf, removed netperf
 # 01/11/14 - uperf-bpench inital drop
 # 07/16/14 - Super-netperf integration... Layed things down for FloatingIP
 # 04/21/14 - Neutron changed how the flows are built. Previously there was a
@@ -35,32 +36,36 @@ else
 fi
 
 #----------------------- Test name ---------------------------------------------
-if [ -z $3 ] ; then
+if [ -z $2 ] ; then
  TESTNAME="no-name"
 else
- echo Test name: $3
- TESTNAME=$3
+ echo Test name: $2
+ TESTNAME=$2
 fi
 
-#----------------------- Run Super-Netperf -------------------------------------
-if [ -z $4 ] ; then 
- SUPER=false
+if [ -z $3 ] ; then
+ FLAVOR="m1.small" 
 else
-  echo Super-netperf Testing
-  SUPER=true
+ echo Flavor: $3
+ FLAVOR=$3
 fi
 
-# UPerf-PBench work
+PLUG=true
+HOST="neutron-n-0"
 UPERF=true
-
-#----------------------- Perf GIT ----------------------------------------------
-PERFGITFILE="perf-dept.tar.gz"
-PERFGIT="/root/osk-networking/${PERFGITFILE}"
-
+SAMPLES=5
+TESTS="stream"
+PROTO="tcp"
+ROUTER_ID="94361b6f-94ce-456f-97dd-aa1f012608eb"
+SECGROUP=true
+HIGH_INTERVAL=false
+KEYSTONE_ADMIN="/root/keystonerc_admin"
+NETPERF_IMG_NAME="pbench"
+NETPERF_IMG=""
+GUEST_SIZE=$FLAVOR
 #----------------------- Currently not using Floating IPs ----------------------
 VETH1="veth$RUN"
 VETH2="veth"`expr $RUN + 1000`
-
 #----------------------- Set the eth within the guest --------------------------
 GUEST_VETH="eth0"
 
@@ -78,41 +83,11 @@ fi
 mkdir -p $FOLDER
 
 #-------------------------------------------------------------------------------
-#
-# Must modify to fit the enviorment...
-#
-# !! Do not overlap networks or use a existing network, must be new !!
-# !! This Script will create the networks, and remove them for cleanup !!
-#
-#-------------------------------------------------------------------------------
-KEYSTONE_ADMIN="/root/keystonerc_admin"
-#----------------------- Image and flavor size ---------------------------------
-NETPERF_IMG_NAME="pbench-updated"
-NETPERF_IMG="/home/netperf-nocloudinit-centos.qcow2"
-GUEST_SIZE="m1.small"
-#----------------------- Netperf values ----------------------------------------
-NETPERF_LENGTH=30
-
-#-------------------------------------------------------------------------------
-#
-# Disable these to just do a simple ping test.
-#
-#-------------------------------------------------------------------------------
-TCP_STREAM=true
-UDP_STREAM=true
-
-#----------------------- Run forever? ------------------------------------------
-FOREVER=false
-
-#----------------------- Floating IPs ------------------------------------------
-FLOATERS=false
-
-#-------------------------------------------------------------------------------
 # Set this to true if tunnels are used, set to false if VLANs are used.
 #
 # !! If VLANs are used, the user must setup the flows and veth before running !!
 #-------------------------------------------------------------------------------
-TUNNEL=true
+TUNNEL=false
 
 #----------------------- Array to hold guest ID --------------------------------
 declare -A GUESTS
@@ -120,7 +95,7 @@ declare -A GUESTS
 #-------------------------------------------------------------------------------
 # Clean will remove Network and Guest information
 #-------------------------------------------------------------------------------
-CLEAN=false
+CLEAN=true
 
 #----------------------- Show Debug output -------------------------------------
 DEBUG=false
@@ -131,35 +106,29 @@ DEBUG=false
 CLEAN_IMAGE=false
 
 #----------------------- Hosts to Launch Guests  -------------------------------
-ZONE[0]="nova:macb8ca3a6106b4.perf.lab.eng.bos.redhat.com"
-ZONE[1]="nova:macb8ca3a60ff54.perf.lab.eng.bos.redhat.com"
-
-#----------------------- Run PStat on Hypervisors ------------------------------
-PSTAT=false
-pstat_host1=""
-pstat_host2=""
+ZONE[0]="nova:macb8ca3a60ff54.perf.lab.eng.bos.redhat.com"
+ZONE[1]="nova:macb8ca3a6106b4.perf.lab.eng.bos.redhat.com"
 
 #----------------------- Network -----------------------------------------------
 TUNNEL_NIC="enp4s0f0"
 TUNNEL_SPEED=`ethtool ${TUNNEL_NIC} | grep Speed | sed 's/\sSpeed: \(.*\)Mb\/s/\1/'`
 TUNNEL_TYPE=`ovs-vsctl show | grep -E 'Port.*gre|vxlan|stt*'`
-NETWORK="240Net-$RUN"
-SUBNET="240.0.$RUN.0/24"
+NETWORK="private-${RUN}"
+SUBNET="10.0.${RUN}.0/24"
+INTERFACE="10.0.${RUN}.150/14"
+SUB_SEARCH="10.0.${RUN}."
 MTU=8950
 SSHKEY="/root/.ssh/id_rsa.pub"
 SINGLE_TUNNEL_TEST=true
 
 #----------------------- No Code.... yet. --------------------------------------
 MULTI_TUNNEL_TEST=false
-
 #----------------------- Need to determine how to tell ( ethtool? STT ) --------
 HARDWARE_OFFLOAD=false 
-
 #----------------------- Is Jumbo Frames enabled throughout? -------------------
 JUMBO=false
-
 #----------------------- Ignore DHCP MTU ---------------------------------------
-DHCP=false
+DHCP=true
 
 #-------------------------------------------------------------------------------
 # Params to set the guest MTU lower to account for tunnel overhead
@@ -167,37 +136,12 @@ DHCP=false
 #-------------------------------------------------------------------------------
 if $DHCP ; then
 if $TUNNEL ; then
- MTU=1450
+ MTU=1500
  if $JUMBO ; then
   MTU=8950
  fi
 fi
 fi
-
-#-------------------------------------------------------------------------------
-# NETPERF["Message Size"]="Expected % of NIC"
-#
-# Breaking down "Expected % of NIC"
-#  NETPERF[16384]="40,60,80"
-#                 TCP,UDP,Hardware Offload
-# If Netperf reports < the Expected % of NIC the test case will be reported as
-# a FAIL. Anything >= will report as PASS
-#-------------------------------------------------------------------------------
-declare -A NETPERF
-NETPERF[8]="1,.1"
-NETPERF[16]="2,.3"
-NETPERF[32]="5,.7"
-NETPERF[64]="8,1"
-NETPERF[128]="13,2"
-NETPERF[256]="15,5"
-NETPERF[512]="15,11"
-NETPERF[1024]="15,20"
-NETPERF[2048]="15,25"
-NETPERF[4096]="15,39"
-NETPERF[8192]="15,55"
-NETPERF[16384]="15,55"
-NETPERF[32768]="15,60"
-NETPERF[65500]="15,60"
 
 #-------------------------------------------------------------------------------
 # Must have admin rights to run this...
@@ -287,6 +231,40 @@ if $DEBUG  ; then
  echo "#-------------------------------------------------------------------------------"
 fi
 
+neutron router-interface-add $ROUTER_ID `neutron net-list | grep ${NETWORKID} | awk '{print $6}'` 
+
+if $PLUG ; then
+ echo "#------------------------------------------------------------------------------- "
+ echo "Plugging Neutron"
+ echo "#-------------------------------------------------------------------------------"
+ PORT_INFO=$(neutron port-create --name rook-${RUN} --binding:host_id=${HOST} ${NETWORKID}) 
+ echo "$PORT_INFO"
+ PORT_ID=$(echo "$PORT_INFO" | grep "| id"  | awk '{print $4}')
+ MAC_ID=$(echo "$PORT_INFO" | grep "mac"  | awk '{print $4}')
+ IP_ADDY=$(echo "$PORT_INFO" |  grep "ip_address" | awk '{print $7}'| grep -Eow '[0-9]+.[0-9]+\.+[0-9]+\.[0-9]+')
+ PORT_SUB=$(neutron net-list| grep $NETWORKID | awk '{print $7}' | sed -rn 's/.*\/(.*)$/\1/p')
+ OVSPLUG="rook-${RUN}"
+ ovs-vsctl -- --may-exist add-port br-int ${OVSPLUG} -- set Interface ${OVSPLUG} type=internal -- set Interface ${OVSPLUG} external-ids:iface-status=active -- set Interface ${OVSPLUG} external-ids:attached-mac=${MAC_ID} -- set Interface ${OVSPLUG} external-ids:iface-id=${PORT_ID}
+ echo $IP_ADDY
+ echo $MAC_ID
+ echo $PORT_ID
+ echo $PORT_SUB
+ sleep 5
+ service neutron-openvswitch-agent restart
+ ip l s up $OVSPLUG
+ ip a a ${IP_ADDY}/${PORT_SUB} dev $OVSPLUG
+ 
+#----------------------- If we are not using Floating IPs ----------------------
+elif [ -z "$(ip link | grep -e "$VETH1\s")" ]; then
+ echo "#------------------------------------------------------------------------------- "
+ echo "Adding a veth"
+ echo "#-------------------------------------------------------------------------------"
+ ip link add name $VETH1 type veth peer name $VETH2 
+ ip a a ${INTERFACE} dev $VETH1
+ ip l s up dev $VETH1
+ ip l s up dev $VETH2
+fi
+
 #
 # Glance is erroring out.
 #
@@ -321,6 +299,7 @@ if [ -z "$(nova keypair-list | grep "network-testkey")" ]; then
  fi
 fi
 
+if $SECGROUP; then
 if [ -z "$(nova secgroup-list | egrep -E "netperf-networktest")" ] ; then
  echo "#------------------------------------------------------------------------------- "
  echo "Adding Security Rules"
@@ -329,6 +308,7 @@ if [ -z "$(nova secgroup-list | egrep -E "netperf-networktest")" ] ; then
  nova secgroup-add-rule netperf-networktest tcp 22 22 0.0.0.0/0
  nova secgroup-add-rule netperf-networktest icmp -1 -1 0.0.0.0/0
 fi
+fi
 
 #----------------------- Launch Instances --------------------------------------
 echo "#------------------------------------------------------------------------------- "
@@ -336,12 +316,27 @@ echo "Launching netperf instnaces"
 echo "#-------------------------------------------------------------------------------"
 echo "Launching Instances, $(date)"
 search_string=""
+NETSERVER_HOST="0"
 for host_zone in "${ZONE[@]}"
 do
   echo "Launching instnace on $host_zone"
+  host=$(echo ${host_zone} | awk -F':' '{print $2}')
+
+  if [ "$NETSERVER_HOST" == "0" ] ; then
+   NETSERVER_HOST=$host
+   register-tool-set --remote=${host} --label=uperf-server 
+  else 
+   NETCLIENT_HOST=$host
+   register-tool-set --remote=${host} --label=uperf-client
+  fi
+  if $SECGROUP; then
   command_out=$(nova boot --image ${IMAGE_ID} --nic net-id=${NETWORKID} --flavor ${GUEST_SIZE} --availability-zone ${host_zone} netperf-${host_zone} --key_name network-testkey --security_group default,netperf-networktest | egrep "\sid\s" | awk '{print $4}')
+  else 
+  command_out=$(nova boot --image ${IMAGE_ID} --nic net-id=${NETWORKID} --flavor ${GUEST_SIZE} --availability-zone ${host_zone} netperf-${host_zone} --key_name network-testkey  | egrep "\sid\s" | awk '{print $4}')
+  fi
   search_string+="$command_out|"
 done
+
 
 #-------------------------------------------------------------------------------
 # Give instances time to get Spawn/Run
@@ -372,22 +367,11 @@ while true; do
  fi
 done
 
-#----------------------- If we are not using Floating IPs ----------------------
-if [ -z "$(ip link | grep -e "$VETH1\s")" ]; then
- echo "#------------------------------------------------------------------------------- "
- echo "Adding a veth"
- echo "#-------------------------------------------------------------------------------"
- ip link add name $VETH1 type veth peer name $VETH2 
- ip a a 240.0.${RUN}.150/24 dev $VETH1
- ip l s up dev $VETH1
- ip l s up dev $VETH2
-fi
-
 #-------------------------------------------------------------------------------
 # Determine the Segmentation ID if not using 
 #-------------------------------------------------------------------------------
 PORT=0
-for ports in `neutron port-list | grep -e "240.0.$RUN." | awk '{print $2}'` ; do 
+for ports in `neutron port-list | grep -e "${SUB_SEARCH}" | awk '{print $2}'` ; do 
  if $DEBUG ; then 
   echo "#----------------------- Debug -------------------------------------------------"
   echo "Ports :: $ports"
@@ -531,12 +515,10 @@ if $SINGLE_TUNNEL_TEST ; then
      fi
      if [ $breakloop -eq 10 ] ; then
        echo "Error : unable to set MTU within Guest"
-       exit 1
      fi
      breakloop=$((breakloop+1))
  done
  fi 
-
  
  if $UPERF ; then
   ssh -o BatchMode=yes -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETSERVER} 'setenforce 0'
@@ -571,15 +553,6 @@ if $SINGLE_TUNNEL_TEST ; then
   fi
  fi
 
-#-------------------------------------------------------------------------------
-# TCP_STREAM Test -
-#  Run Netperf TCP_STREAM test from one Host to the other over the Tunnel.
-#
-#  Breaking down "Expected % of NIC"
-#   NETPERF[16384]="40,60,80"
-#                 TCP,UDP,Hardware Offload
-#-------------------------------------------------------------------------------
-
 #
 # We can add a new param,  $UPERF, and instead of sshing to the guest for netperf, it
 # Logs in to configure and run uperf. OK
@@ -597,86 +570,25 @@ if $SINGLE_TUNNEL_TEST ; then
   ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETCLIENT} 'setenforce 0'
   ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETCLIENT} 'systemctl stop iptables'
   ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETCLIENT} 'systemctl stop firewalld'
-  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETCLIENT} "echo '10.16.28.171 perf42.perf.lab.eng.bos.redhat.com' >> /etc/hosts"
-  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETCLIENT} "echo nameserver 10.16.36.29 > /etc/resolv.conf"
-  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETCLIENT} "pbench_uperf --mode=client --server=${NETSERVER} --test-types=stream" | tee -a $FOLDER/uperf-data
-  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETCLIENT} "postprocess-results" | tee -a $FOLDER/postprocess-data
-  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETCLIENT} "move-results" | tee -a $FOLDER/move-data
-
- elif $TCP_STREAM ; then
-  echo "#------------------------------------------------------------------------------- "
-  echo "BEGIN TCP_STREAM Test"
-  echo "#-------------------------------------------------------------------------------"
-  echo "Message Size, Test Status, Tunnel Speed, Throughput, Expected % of Tunnel"
-  date_file=$(date +"%d_%m_%y_%H%M%S")
-  prev_msg_size=0
-  for msg_size in ${!NETPERF[@]}
-  do
-
-#----------------------- Add logic to determine Lock file ----------------------
-   wait_state=`ps aux | grep ssh | grep "\-m ${prev_msg_size}" | grep -v grep | wc -l`
-
-#-------------------------------------------------------------------------------
-# Sync the SSH Runs - if the above command finds previous ssh clients, wait for
-# them to finish
-#-------------------------------------------------------------------------------
-   if [[ ${wait_state} -gt 0 ]] ; then
-     continue
-   fi
-
-   out=`ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETCLIENT} "netperf -4 -H ${NETSERVER} -I 99,10 -T1,1 -- -m ${msg_size}" | tee -a $FOLDER/$RUN-$date_file-TCP_STREAM`
-   if $DEBUG ; then 
-     echo "DEBUG :: $out"
-   fi
-   throughput=`echo "${out}"| grep "$msg_size"| awk '{print $5}'| sed -e 's/ /,/g'`
-   percent=`perl -e "print ${throughput}/${TUNNEL_SPEED}*100" 2> /dev/null`
-#-------------------------------------------------------------------------------
-# 1 = TCP, 2 = UDP, 3 = Hardware offload
-#-------------------------------------------------------------------------------
-   expected_percent=`echo "${NETPERF[$msg_size]}" | cut -d , -f 1`
-   perl -e "if(${percent} >= ${expected_percent}) { exit 1 }" > /dev/null 2>&1
-   if [ $? -eq 0 ]; then
-    echo "${msg_size} , FAILED, ${TUNNEL_SPEED} , ${throughput} , ${expected_percent}"
-   else 
-    echo "${msg_size} , PASSED, ${TUNNEL_SPEED} , ${throughput} , ${expected_percent}"
-   fi
- done
- echo "#------------------------------------------------------------------------------- "
- echo "END TCP_STREAM Test"
- echo "#-------------------------------------------------------------------------------"
- fi
- if $UDP_STREAM ; then
-  echo "#------------------------------------------------------------------------------- "
-  echo "BEGIN UDP_STREAM Test"
-  echo "#-------------------------------------------------------------------------------"
-  echo "Message Size, Test Status, Tunnel Speed, Throughput, Expected % of Tunnel"
-  date_file=$(date +"%d_%m_%y_%H%M%S")
- for msg_size in ${!NETPERF[@]}
-  do
-   out=`ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETCLIENT} "netperf -4 -H ${NETSERVER} -I 99,10 -T1,1 -t UDP_STREAM -- -m ${msg_size}" | tee -a $FOLDER/$RUN-$date_file-UDP_STREAM`
-   if $DEBUG ; then 
-     echo "DEBUG :: ${out}"
-   fi
-   throughput=`echo "${out}"| grep "$msg_size" -A1 | tail -1 | awk '{print $4}'| sed -e 's/ /,/g'`
-   percent=`perl -e "print ${throughput}/${TUNNEL_SPEED}*100" 2> /dev/null`
-#-------------------------------------------------------------------------------
-# 1 = TCP, 2 = UDP, 3 = Hardware offload
-#-------------------------------------------------------------------------------
-   expected_percent=`echo "${NETPERF[$msg_size]}" | cut -d , -f 1`
-   perl -e "if(${percent} >= ${expected_percent}) { exit 1 }" /dev/null 2>&1
-   if [ $? -eq 0 ]; then
-    echo "${msg_size} , FAILED, ${TUNNEL_SPEED} , ${throughput} , ${expected_percent}"
-   else
-    echo "${msg_size} , PASSED, ${TUNNEL_SPEED} , ${throughput} , ${expected_percent}"
-   fi
+  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETCLIENT} "echo 10.16.28.173 pbench.perf.lab.eng.bos.redhat.com >> /etc/hosts"
+  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETCLIENT} "echo 10.16.28.171 perf42.perf.lab.eng.bos.redhat.com >> /etc/hosts"
+  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETSERVER} "echo 10.16.28.173 pbench.perf.lab.eng.bos.redhat.com >> /etc/hosts"
+  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETSERVER} "echo 10.16.28.171 perf42.perf.lab.eng.bos.redhat.com >> /etc/hosts"
+  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETSERVER} "echo nameserver 10.16.36.29 > /etc/resolv.conf"
+  register-tool-set --remote=${NETCLIENT} 
+  register-tool-set --remote=${NETSERVER} 
+  if $HIGH_INTERVAL ; then
+  for tool in sar pidstat; do
+    register-tool --name=${tool} --remote=${NETCLIENT} -- --interval=1
+    register-tool --name=${tool} --remote=${NETSERVER} -- --interval=1
   done
-  echo "#------------------------------------------------------------------------------- "
-  echo "END UDP_STREAM Test"
-  echo "#-------------------------------------------------------------------------------"
   fi
+  pbench_uperf --clients=${NETCLIENT} --servers=${NETSERVER} --samples=${SAMPLES} --client-label=uperf-client:${NETCLIENT_HOST} --server-label=uperf-server:${NETSERVER_HOST} --test-types=${TESTS} --protocols=${PROTO} --config=${TESTNAME}
 
+  move-results
+  clear-tools
+ fi
 fi # End SINGLE_TUNNEL_TEST
-
 #----------------------- Cleanup -----------------------------------------------
 if $CLEAN ; then
  cleanup
