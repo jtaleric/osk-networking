@@ -52,16 +52,16 @@ else
 fi
 
 PLUG=true
-HOST="neutron-n-0"
+HOST="overcloud-controller-0"
 UPERF=true
-SAMPLES=5
+SAMPLES=1
 TESTS="stream"
 PROTO="tcp"
-ROUTER_ID="94361b6f-94ce-456f-97dd-aa1f012608eb"
+ROUTER_ID="bf545bbc-fe09-47c0-b98e-8c6f54b8f4e5"
 SECGROUP=true
 HIGH_INTERVAL=false
-KEYSTONE_ADMIN="/root/keystonerc_admin"
-NETPERF_IMG_NAME="pbench"
+KEYSTONE_ADMIN="/root/overcloudrc"
+NETPERF_IMG_NAME="pbench-image"
 NETPERF_IMG=""
 GUEST_SIZE=$FLAVOR
 
@@ -83,7 +83,7 @@ mkdir -p $FOLDER
 #
 # !! If VLANs are used, the user must setup the flows and veth before running !!
 #-------------------------------------------------------------------------------
-TUNNEL=false
+TUNNEL=true
 
 #----------------------- Array to hold guest ID --------------------------------
 declare -A GUESTS
@@ -102,18 +102,18 @@ DEBUG=false
 CLEAN_IMAGE=false
 
 #----------------------- Hosts to Launch Guests  -------------------------------
-ZONE[0]="nova:macb8ca3a60ff54.perf.lab.eng.bos.redhat.com"
-ZONE[1]="nova:macb8ca3a6106b4.perf.lab.eng.bos.redhat.com"
+ZONE[0]="nova:overcloud-novacompute-0.localdomain"
+ZONE[1]="nova:overcloud-novacompute-0.localdomain"
 
 #----------------------- Network -----------------------------------------------
-TUNNEL_NIC="enp4s0f0"
+TUNNEL_NIC="p1p1"
 TUNNEL_SPEED=`ethtool ${TUNNEL_NIC} | grep Speed | sed 's/\sSpeed: \(.*\)Mb\/s/\1/'`
 TUNNEL_TYPE=`ovs-vsctl show | grep -E 'Port.*gre|vxlan|stt*'`
 NETWORK="private-${RUN}"
-SUBNET="10.0.${RUN}.0/24"
-INTERFACE="10.0.${RUN}.150/14"
-SUB_SEARCH="10.0.${RUN}."
-MTU=8950
+SUBNET="12.0.${RUN}.0/24"
+INTERFACE="12.0.${RUN}.150/14"
+SUB_SEARCH="12.0.${RUN}."
+MTU=1500
 SSHKEY="/root/.ssh/id_rsa.pub"
 SINGLE_TUNNEL_TEST=true
 
@@ -124,7 +124,7 @@ HARDWARE_OFFLOAD=false
 #----------------------- Is Jumbo Frames enabled throughout? -------------------
 JUMBO=false
 #----------------------- Ignore DHCP MTU ---------------------------------------
-DHCP=true
+DHCP=false
 
 #-------------------------------------------------------------------------------
 # Params to set the guest MTU lower to account for tunnel overhead
@@ -307,10 +307,10 @@ do
 
   if [ "$NETSERVER_HOST" == "0" ] ; then
    NETSERVER_HOST=$host
-   register-tool-set --remote=${host} --label=uperf-server
+   pbench-register-tool-set --remote=${host} --label=uperf-server
   else
    NETCLIENT_HOST=$host
-   register-tool-set --remote=${host} --label=uperf-client
+   pbench-register-tool-set --remote=${host} --label=uperf-client
   fi
   if $SECGROUP; then
   command_out=$(nova boot --image ${IMAGE_ID} --nic net-id=${NETWORKID} --flavor ${GUEST_SIZE} --availability-zone ${host_zone} netperf-${host_zone} --key_name network-testkey --security_group default,netperf-networktest | egrep "\sid\s" | awk '{print $4}')
@@ -485,7 +485,7 @@ if $SINGLE_TUNNEL_TEST ; then
        pass=$((pass+1))
      fi
      if $DEBUG ; then
-	echo "pass=$pass , breakloop=$breakloop"
+    echo "pass=$pass , breakloop=$breakloop"
      fi
      if [ $breakloop -eq 10 ] ; then
        echo "Error : unable to set MTU within Guest"
@@ -525,21 +525,22 @@ if $SINGLE_TUNNEL_TEST ; then
   ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETSERVER} "echo 10.16.28.173 pbench.perf.lab.eng.bos.redhat.com >> /etc/hosts"
   ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETSERVER} "echo 10.16.28.171 perf42.perf.lab.eng.bos.redhat.com >> /etc/hosts"
   ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETSERVER} "echo nameserver 10.16.36.29 > /etc/resolv.conf"
-  register-tool-set --remote=${NETCLIENT}
-  register-tool-set --remote=${NETSERVER}
+  pbench-register-tool-set --remote=${NETCLIENT}
+  pbench-register-tool-set --remote=${NETSERVER}
   if $HIGH_INTERVAL ; then
   for tool in sar pidstat; do
-    register-tool --name=${tool} --remote=${NETCLIENT} -- --interval=1
-    register-tool --name=${tool} --remote=${NETSERVER} -- --interval=1
+    pbench-register-tool --name=${tool} --remote=${NETCLIENT} -- --interval=1
+    pbench-register-tool --name=${tool} --remote=${NETSERVER} -- --interval=1
   done
   fi
-  pbench_uperf --clients=${NETCLIENT} --servers=${NETSERVER} --samples=${SAMPLES} --client-label=uperf-client:${NETCLIENT_HOST} --server-label=uperf-server:${NETSERVER_HOST} --test-types=${TESTS} --protocols=${PROTO} --config=${TESTNAME}
+  pbench-uperf --clients=${NETCLIENT} --servers=${NETSERVER} --samples=${SAMPLES} --test-types=${TESTS} --protocols=${PROTO} --config=${TESTNAME}
 
-  move-results
-  clear-tools
+  pbench-move-results
+  #pbench-clear-tools
  fi
 fi # End SINGLE_TUNNEL_TEST
 #----------------------- Cleanup -----------------------------------------------
 if $CLEAN ; then
  cleanup
 fi
+
