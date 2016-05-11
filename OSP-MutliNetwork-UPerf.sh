@@ -64,6 +64,9 @@ KEYSTONE_ADMIN="/root/overcloudrc"
 NETPERF_IMG_NAME="pbench-image"
 NETPERF_IMG=""
 GUEST_SIZE=$FLAVOR
+PBENCH_SERVER_IP="1.1.1.1"
+PBENCH_SERVER_HOSTNAME="pbench.server.mine.com"
+NAMESERVER="1.1.1.1"
 
 #----------------------- Store the results -------------------------------------
 if [ -z $2 ] ; then
@@ -520,11 +523,9 @@ if $SINGLE_TUNNEL_TEST ; then
   ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETCLIENT} 'systemctl stop firewalld'
   # Below is specific to Red hat
   # We could add this to the Neutron subnet
-  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETCLIENT} "echo 10.16.28.173 pbench.perf.lab.eng.bos.redhat.com >> /etc/hosts"
-  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETCLIENT} "echo 10.16.28.171 perf42.perf.lab.eng.bos.redhat.com >> /etc/hosts"
-  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETSERVER} "echo 10.16.28.173 pbench.perf.lab.eng.bos.redhat.com >> /etc/hosts"
-  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETSERVER} "echo 10.16.28.171 perf42.perf.lab.eng.bos.redhat.com >> /etc/hosts"
-  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETSERVER} "echo nameserver 10.16.36.29 > /etc/resolv.conf"
+  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETCLIENT} "echo ${PBENCH_SERVER_IP} ${PBENCH_SERVER_HOSTNAME} >> /etc/hosts"
+  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETSERVER} "echo ${PBENCH_SERVER_IP} ${PBENCH_SERVER_HOSTNAME} >> /etc/hosts"
+  ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -q -t ${NETSERVER} "echo nameserver ${NAMESERVER} > /etc/resolv.conf"
   pbench-register-tool-set --remote=${NETCLIENT}
   pbench-register-tool-set --remote=${NETSERVER}
   if $HIGH_INTERVAL ; then
