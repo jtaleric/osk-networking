@@ -196,6 +196,10 @@ cleanup() {
  nlist=$(neutron subnet-list | grep "${SUBNET}" | awk '{print $2}')
  if ! [ -z "$nlist" ] ; then
   echo "Cleaning test networks..."
+  neutron router-interface-delete ${ROUTER_ID} $(neutron subnet-list | grep "${SUBNET}" | awk '{print $2}')
+  for port in `neutron port-list | grep $(neutron subnet-list | grep "${SUBNET}" | awk '{print $2}') | awk '{print $2}'`; do
+    neutron port-delete $port
+  done
   neutron subnet-delete $(neutron subnet-list | grep "${SUBNET}" | awk '{print $2}')
   neutron net-delete $NETWORK
  fi
@@ -537,7 +541,7 @@ if $SINGLE_TUNNEL_TEST ; then
   pbench-uperf --clients=${NETCLIENT} --servers=${NETSERVER} --samples=${SAMPLES} --test-types=${TESTS} --protocols=${PROTO} --config=${TESTNAME}
 
   pbench-move-results
-  #pbench-clear-tools
+  pbench-clear-tools
  fi
 fi # End SINGLE_TUNNEL_TEST
 #----------------------- Cleanup -----------------------------------------------
