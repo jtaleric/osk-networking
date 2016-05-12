@@ -29,12 +29,11 @@ RUN=1
 TESTNAME="no-name"
 FLAVOR="m1.small"
 function usage() {
-        echo "here"
         printf "The following options are available:\n"
         printf "\n"
         printf -- "\t --help : Help \n"
         printf -- "\t --run : Run number- useful for multi-run tests \n"
-        printf -- "\t --directory : Name os test \n"
+        printf -- "\t --directory : Name of test \n"
         printf -- "\t --flavor : flavor of instances \n"
 }
 
