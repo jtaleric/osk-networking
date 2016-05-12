@@ -25,31 +25,45 @@
 # @author Joe Talerico (jtaleric@redhat.com)
 #-------------------------------------------------------------------------------
 
-#-------------------------------------------------------------------------------
-# Determine the Run - for multi-run
-#-------------------------------------------------------------------------------
-RUN=0
-if [ -z $1 ] ; then
- RUN=1
-else
- echo Run : $1
- RUN=$1
-fi
+RUN=1
+TESTNAME="no-name"
+FLAVOR="m1.small"
+function usage() {
+        echo "here"
+        printf "The following options are available:\n"
+        printf "\n"
+        printf -- "\t --help : Help \n"
+        printf -- "\t --run : Run number- useful for multi-run tests \n"
+        printf -- "\t --directory : Name os test \n"
+        printf -- "\t --flavor : flavor of instances \n"
+}
 
-#----------------------- Test name ---------------------------------------------
-if [ -z $2 ] ; then
- TESTNAME="no-name"
-else
- echo Test name: $2
- TESTNAME=$2
-fi
-
-if [ -z $3 ] ; then
- FLAVOR="m1.small"
-else
- echo Flavor: $3
- FLAVOR=$3
-fi
+opts=$(getopt -o hr:d:f: --longoptions "help,run:,testname:,flavor:" -n "getopt.sh" -- "$@");
+eval set -- "$opts";
+while true; do
+    case "$1" in
+    -h|--help)
+        usage
+        exit
+        ;;
+    -r|--run)
+        RUN=$2
+        shift 2
+        ;;
+    -t|--testname)
+        TESTNAME="$2"
+        shift 2
+        ;;
+    -f|--flavor)
+        FLAVOR="$2"
+        shift 2
+        ;;
+    --)
+        shift
+        break
+        ;;
+    esac
+done
 
 PLUG=true
 HOST="overcloud-controller-0"
