@@ -28,16 +28,18 @@
 RUN=1
 TESTNAME="no-name"
 FLAVOR="m1.small"
+#---------------------Directory to store the results -------------------------------------
+FOLDER=OSP-NetworkScale-Output_$(date +%Y_%m_%d_%H_%M_%S)
 function usage() {
         printf "The following options are available:\n"
         printf "\n"
         printf -- "\t --help : Help \n"
         printf -- "\t --run : Run number- useful for multi-run tests \n"
-        printf -- "\t --directory : Name of test \n"
+        printf -- "\t --testname : Name of test \n"
         printf -- "\t --flavor : flavor of instances \n"
 }
 
-opts=$(getopt -o hr:d:f: --longoptions "help,run:,testname:,flavor:" -n "getopt.sh" -- "$@");
+opts=$(getopt -o hr:t:f: --longoptions "help,run:,testname:,flavor:" -n "getopt.sh" -- "$@");
 eval set -- "$opts";
 while true; do
     case "$1" in
@@ -47,14 +49,18 @@ while true; do
         ;;
     -r|--run)
         RUN=$2
+        echo Run : $2
         shift 2
         ;;
     -t|--testname)
         TESTNAME="$2"
+        FOLDER=TESTNAME
+        echo Test name: $2
         shift 2
         ;;
     -f|--flavor)
         FLAVOR="$2"
+        echo Flavor: $2
         shift 2
         ;;
     --)
@@ -63,6 +69,7 @@ while true; do
         ;;
     esac
 done
+
 
 PLUG=true
 HOST="overcloud-controller-0"
@@ -80,13 +87,6 @@ GUEST_SIZE=$FLAVOR
 PBENCH_SERVER_IP="1.1.1.1"
 PBENCH_SERVER_HOSTNAME="pbench.server.mine.com"
 NAMESERVER="1.1.1.1"
-
-#----------------------- Store the results -------------------------------------
-if [ -z $2 ] ; then
- FOLDER=OSP-NetworkScale-Output_$(date +%Y_%m_%d_%H_%M_%S)
-else
- FOLDER=$2
-fi
 
 #-------------------------------------------------------------------------------
 # Folder where to store the the results of netperf and the output of
