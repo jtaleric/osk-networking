@@ -202,6 +202,7 @@ cleanup() {
   done
   neutron subnet-delete $(neutron subnet-list | grep "${SUBNET}" | awk '{print $2}')
   neutron net-delete $NETWORK
+  ovs-vsctl del-port rook-${RUN}
  fi
 
  if $CLEAN_IMAGE ; then
