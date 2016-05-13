@@ -54,7 +54,7 @@ while true; do
         ;;
     -t|--testname)
         TESTNAME="$2"
-        FOLDER=TESTNAME
+        FOLDER=$TESTNAME
         echo Test name: $2
         shift 2
         ;;
