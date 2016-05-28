@@ -252,8 +252,9 @@ if $PLUG ; then
  echo $PORT_SUB
  sleep 5
  service neutron-openvswitch-agent restart
- ip l s up $OVSPLUG
+ ip link set address $MAC_ID dev $OVSPLUG
  ip a a ${IP_ADDY}/${PORT_SUB} dev $OVSPLUG
+ ip l s up $OVSPLUG
 fi
 
 #
