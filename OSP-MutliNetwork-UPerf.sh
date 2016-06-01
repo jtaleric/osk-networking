@@ -215,6 +215,7 @@ cleanup() {
   done
   neutron subnet-delete $(neutron subnet-list | grep "${SUBNET}" | awk '{print $2}')
   neutron net-delete $NETWORK
+  ovs-vsctl del-port rook-${RUN}
  fi
 
  if $CLEAN_IMAGE ; then
@@ -414,6 +415,7 @@ while true ; do
   continue
  fi
  VLAN=`printf "%d" ${VLANID_HEX}`
+ ovs-vsctl set Port $OVSPLUG tag=$VLAN
  if $DEBUG ; then
   echo "#----------------------- Debug -------------------------------------------------"
   echo "VLAN :: $VLAN"
