@@ -72,7 +72,7 @@ done
 
 
 PLUG=true
-HOST="overcloud-controller-0"
+HOST=$(hostname)
 UPERF=true
 SAMPLES=1
 TESTS="stream"
